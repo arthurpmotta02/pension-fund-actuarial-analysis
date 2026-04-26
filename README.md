@@ -2,7 +2,7 @@
 
 **End-to-end actuarial valuation of a Brazilian Defined Benefit (BD) pension plan**, combining R for actuarial modelling and Python for ALM and interactive dashboard.
 
-Built targeting quantitative actuarial roles at Brazilian EFPC pension funds — PreviRB, Previ, Petros, Funcef, Itaúprev.
+Built targeting quantitative actuarial roles at Brazilian EFPC pension funds.
 
 ---
 
