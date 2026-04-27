@@ -1,112 +1,233 @@
 # Pension Fund Actuarial Analysis
 
-**End-to-end actuarial valuation of a Brazilian Defined Benefit (BD) pension plan**, combining R for actuarial modelling and Python for ALM and interactive dashboard.
+End-to-end actuarial valuation of a Brazilian Defined Benefit (BD) pension plan, combining R for actuarial modelling and Python for ALM and interactive dashboard.
 
-Built targeting quantitative actuarial roles at Brazilian EFPC pension funds.
+Built targeting quantitative actuarial roles at Brazilian EFPC pension funds (Previ, Petros, Funcef, Itaúprev and similar).
 
 ---
 
 ## Data Pipeline
 
 ```
-R (StMoMo + lifecontingencies)          Python (ALM + Streamlit)
-─────────────────────────────           ──────────────────────────
-01_mortality_tables.R                   04_alm.ipynb
-  └─ IBGE 2022, BR-EMS 2021, AT-2000     └─ Liability cash flows
-02_lee_carter.R                              Duration analysis
-  └─ Lee-Carter fit + forecast               NTN-B portfolio
-03_bd_plan_valuation.R                       Interest rate stress
-  └─ PMBaC, PMBC, normal cost          app/streamlit_app.py
-     Longevity sensitivity               └─ Interactive dashboard
+R (StMoMo + lifecontingencies)             Python (ALM + Streamlit)
+──────────────────────────────             ─────────────────────────
+01_mortality_tables.R                      04_alm.ipynb
+  BR-EMS 2021, IBGE 2022, AT-2000           Liability cash flows
+02_lee_carter.R                             Duration analysis
+  Lee-Carter fit + forecast                  NTN-B portfolio
+03_bd_plan_valuation.R                      Interest rate stress
+  PMBaC, PMBC, normal cost            app/streamlit_app.py
+  Longevity sensitivity                  Interactive dashboard
          ↓
    data/processed/ (CSV)
 ```
 
 ---
 
-## Results
+## Portfolio Context
 
-### Mortality Tables (notebook 01)
+All monetary results are based on a **synthetic participant portfolio calibrated to a mid-size Brazilian EFPC**, with the following profile:
+
+| | Active | Retired |
+|---|---|---|
+| Participants | 500 | 200 |
+| Mean age | 44.7 years | 72.0 years |
+| Mean salary / benefit | R$ 20,137 /month | R$ 12,844 /month |
+| Mean service | 11.6 years | — |
+
+Actuarial assumptions follow **PREVIC 2024 reference hypotheses**:
+
+| Assumption | Value |
+|---|---|
+| Discount rate | 5.75% p.a. (INPC + 4.25%) |
+| Mortality table | BR-EMS 2021 (Male) — conservative EFPC choice |
+| Salary growth | 2.0% real p.a. |
+| Benefit accrual | 2% per year of service |
+| Maximum benefit | 70% of projected final salary |
+| Retirement age | 65 |
+| Benefit payment | 13 instalments per year (13th salary included) |
+
+---
+
+## Notebook 01 — Mortality Tables
+
+Loads and compares three Brazilian actuarial mortality tables using `MortalityLaws` and `lifecontingencies`.
 
 ![Mortality Tables](results/figures/01_qx_comparison.png)
 
-| Table | e0 | e65 |
-|---|---|---|
-| BR-EMS 2021 Male | 84.6 years | 22.5 years |
-| BR-EMS 2021 Female | 93.9 years | 30.8 years |
-| IBGE 2022 | 83.9 years | 23.2 years |
-| AT-2000 (unisex) | 68.5 years | 13.1 years |
+### Life expectancy
 
-The annuity factor ä_65 ranges from 9.02 (AT-2000) to 12.52 (BR-EMS 2021 Male) at 5.75% — a 39% difference that directly translates into liability size.
+| Table | e&#x2080; | e&#x2086;&#x2085; | Notes |
+|---|---|---|---|
+| BR-EMS 2021 Male | 84.6 yrs | 22.5 yrs | Insurance market standard (SUSEP/CNseg) |
+| BR-EMS 2021 Female | 93.9 yrs | 30.8 yrs | |
+| IBGE 2022 | 83.9 yrs | 23.2 yrs | Population mortality |
+| AT-2000 (unisex) | 68.5 yrs | 13.1 yrs | American reference, lighter tail |
 
-### Lee-Carter Projection (notebook 02)
+### Annuity factors
+
+The whole-life annuity-due ä&#x2093; at interest rate i is computed via commutation functions:
+
+ä&#x2093; = N&#x2093; / D&#x2093;
+
+where D&#x2093; = l&#x2093; · v&#x2093; and N&#x2093; = ∑ D&#x2093;&#x208A;&#x2096; (v = 1/(1+i))
+
+![Annuity Factors](results/figures/02_annuity_factors.png)
+
+At i = 5.75%, ä&#x2086;&#x2085; ranges from **9.02** (AT-2000) to **12.52** (BR-EMS 2021 Male) — a 39% difference that translates directly into liability size. Choosing a more conservative table increases the liability proportionally.
+
+---
+
+## Notebook 02 — Lee-Carter Mortality Projection
+
+Fits the Lee-Carter (1992) model via `StMoMo` on 43 years of mortality data (1980–2022), then projects 43 years ahead (2023–2065).
+
+### Model
+
+The Lee-Carter model decomposes log-mortality as:
+
+ln m(x,t) = a&#x2093; + b&#x2093; · k&#x209C; + ε(x,t)
+
+- **a&#x2093;** — age-specific mean log-mortality (time average)
+- **b&#x2093;** — age sensitivity to mortality improvement
+- **k&#x209C;** — mortality index (time trend), projected as Random Walk with Drift:
+  k&#x209C; = k&#x209C;&#x208B;&#x2081; + d + σ · Z&#x209C;, where d = -0.73 per year
+
+Estimation via **SVD** on the centred log-mortality matrix.
+
+![Lee-Carter Parameters](results/figures/03_lc_parameters.png)
+
+### Projection
 
 ![Life Expectancy Projection](results/figures/05_life_expectancy_65.png)
 
-Lee-Carter model fitted via `StMoMo` on 43 years of mortality data (1980–2022), projected 43 years ahead (2023–2065).
-
 | Metric | Value |
 |---|---|
-| k_t drift | −0.73 per year |
-| e65 in 2022 | 25.9 years |
-| e65 projected in 2065 | 25.9 years (stable trajectory) |
+| k&#x209C; drift (d) | −0.73 per year |
+| e&#x2086;&#x2085; in 2022 | 25.9 years |
+| e&#x2086;&#x2085; projected in 2065 | 25.9 years |
 
-### BD Plan Valuation (notebook 03)
+Note: the stable projection reflects the data-generating process used (synthetic mortality matrix with moderate improvement rates). With real IBGE historical data the drift would be more pronounced.
+
+---
+
+## Notebook 03 — BD Plan Actuarial Valuation
+
+Projected Unit Credit (PUC) valuation using `lifecontingencies` — the IFRS IAS 19 / PREVIC standard method.
+
+### Commutation and liability formulas
+
+**PMBaC** (Provisão Matemática de Benefícios a Conceder) for an active participant aged x with s years of service:
+
+PMBaC = B&#x1D35;&#x1D3A;&#x1D35;&#x1D3C; · ä&#x2099; · &#x2099;E&#x2093;
+
+where:
+- B&#x1D35;&#x1D3A;&#x1D35;&#x1D3C; = projected benefit × (s / total projected service) — unit credit portion
+- ä&#x2099; = whole-life annuity at retirement age n
+- &#x2099;E&#x2093; = &#x2099;p&#x2093; · v&#x207F; — pure endowment (survival probability × discount factor)
+
+**PMBC** (Provisão Matemática de Benefícios Concedidos) for a retired participant aged x receiving annual benefit B:
+
+PMBC = B · ä&#x2093;
 
 ![Liability Breakdown](results/figures/06_liability_breakdown.png)
 
-Projected Unit Credit (PUC) valuation — IFRS IAS 19 / PREVIC standard — using `lifecontingencies`.
+### Results
 
-| Metric | Value |
-|---|---|
-| Active participants | 500 |
-| Retired participants | 200 |
-| PMBaC (active) | R$ 16.7M |
-| PMBC (retired) | R$ 353.8M |
-| **Total Liability** | **R$ 370.5M** |
-| Normal Cost | R$ −799k |
-| Discount rate | 5.75% p.a. (PREVIC 2024) |
-| Mortality table | BR-EMS 2021 Male |
+| Metric | Value | Notes |
+|---|---|---|
+| PMBaC (500 active) | R$ 16.7M | Low relative to PMBC — portfolio is mature |
+| PMBC (200 retired) | R$ 353.8M | Dominant component |
+| **Total Liability** | **R$ 370.5M** | |
+| Normal Cost | R$ −800k | Negative due to salary growth assumption |
+| ä&#x2086;&#x2085; (BR-EMS M, 5.75%) | 12.52 | Annuity factor used for PMBC |
 
-### Longevity Risk
+The low PMBaC/PMBC ratio (4.5%) reflects a mature fund profile: most liability is already in payment phase, which is typical of older EFPC funds in Brazil.
+
+### Discount rate sensitivity
+
+![Discount Rate Sensitivity](results/figures/07_discount_rate_sensitivity.png)
+
+A 1 percentage point increase in the discount rate (from 5.75% to 6.75%) reduces PMBaC by approximately 12% — illustrating the leverage that actuarial hypotheses have on reported liability.
+
+### Longevity risk
+
+If participants live longer than the mortality table assumes, the liability increases because annuity payments extend further:
 
 ![Longevity Sensitivity](results/figures/08_longevity_sensitivity.png)
 
-| Extra years of life | Liability increase |
-|---|---|
-| +1 year | +0.7% |
-| +2 years | +1.3% |
-| +3 years | +2.0% |
-| +5 years | +3.5% |
+| Extra years of life | Liability increase | Additional R$ |
+|---|---|---|
+| +1 year | +0.7% | +R$ 2.5M |
+| +2 years | +1.3% | +R$ 5.0M |
+| +3 years | +2.0% | +R$ 7.5M |
+| +5 years | +3.5% | +R$ 12.8M |
 
-### ALM — Duration and Interest Rate Risk (notebook 04)
+Computed by scaling down q&#x2093; at ages ≥ 50 by 2.5% per additional year of life, then revaluing the full portfolio.
 
-![Duration Gap](results/figures/11_duration_gap.png)
+---
+
+## Notebook 04 — Asset-Liability Management (ALM)
+
+Reads R outputs and performs duration-based ALM analysis in Python.
+
+### Duration of the liability
+
+The Macaulay duration of the liability cash flow stream CF&#x209C;:
+
+D&#x1D39;&#x1D43;&#x1D9C; = ∑ t · PV(CF&#x209C;) / ∑ PV(CF&#x209C;)
+
+Modified duration: D&#x1D39;&#x1D43;&#x1D3A; = D&#x1D39;&#x1D43;&#x1D43; / (1+i)
+
+Interpretation: a 1% parallel shift in rates changes the liability value by approximately D&#x1D39;&#x1D43;&#x1D3A; percent.
+
+![Liability Cash Flows](results/figures/10_liability_cash_flows.png)
 
 | Metric | Value |
 |---|---|
-| Liability Present Value | R$ 494.8M |
-| Liability Macaulay Duration | 18.52 years |
-| NTN-B Portfolio Duration | 9.33 years |
-| **Duration Gap** | **9.19 years** |
-| Funding Ratio | 100% |
+| Liability PV | R$ 494.8M |
+| Macaulay Duration | 18.52 years |
+| Modified Duration | 17.51 |
 
-The duration gap of 9.2 years is the main risk: a 100bp rate drop increases the liability by ~R$74M while assets rise only ~R$47M, generating a deficit of ~R$51M.
+Note: liability PV (R$494.8M) exceeds the R valuation total (R$370.5M) because the Python projection uses a different survival approximation and 50-year horizon. The R valuation using `lifecontingencies` is the actuarially authoritative figure.
 
-### Interest Rate Stress Test
+### NTN-B Portfolio
+
+NTN-B (Tesouro IPCA+) are the preferred asset for Brazilian EFPC funds: returns indexed to IPCA (matching the liability growth assumption), zero credit risk, and maturities up to 2055.
+
+![Duration Gap](results/figures/11_duration_gap.png)
+
+| Bond | Weight | Duration |
+|---|---|---|
+| NTN-B 2030 | 20% | 4.46 years |
+| NTN-B 2035 | 25% | 7.78 years |
+| NTN-B 2040 | 20% | 10.25 years |
+| NTN-B 2045 | 20% | 12.11 years |
+| NTN-B 2050 | 15% | 13.48 years |
+| **Portfolio** | **100%** | **9.33 years** |
+
+**Duration gap = 18.52 − 9.33 = 9.19 years**
+
+This gap means the fund is structurally exposed to rate drops: a 100bp decline increases the liability by ~R$74M but assets rise only ~R$47M, creating a ~R$51M deficit.
+
+### Interest rate stress test
 
 ![Stress Test](results/figures/12_interest_rate_stress.png)
 
-| Rate Shock | Surplus/Deficit |
-|---|---|
-| −200 bp | −R$ 119.6M |
-| −100 bp | −R$ 51.4M |
-| −50 bp | −R$ 23.6M |
-| +50 bp | +R$ 19.4M |
-| +100 bp | +R$ 34.6M |
-| +200 bp | +R$ 52.3M |
+Duration-convexity approximation: ΔP/P ≈ −D&#x1D39;&#x1D43;&#x1D3A; · Δy + ½ · C · Δy²
 
-**Immunization note:** the longest NTN-B available (2055, duration 14.6 years) falls 3.9 years short of the liability target of 18.5 years. Full immunization requires NTN-B 2055 combined with interest rate swaps (DI × IPCA) — the approach used by major Brazilian EFPC funds.
+| Rate shock | Liability | Assets | Surplus |
+|---|---|---|---|
+| −200 bp | R$ 713.6M | R$ 594.0M | −R$ 119.6M |
+| −100 bp | R$ 592.8M | R$ 541.4M | −R$ 51.4M |
+| −50 bp | R$ 541.0M | R$ 517.4M | −R$ 23.6M |
+| +50 bp | R$ 454.3M | R$ 473.7M | +R$ 19.4M |
+| +100 bp | R$ 419.5M | R$ 454.1M | +R$ 34.6M |
+| +200 bp | R$ 367.0M | R$ 419.3M | +R$ 52.3M |
+
+### Immunization
+
+The longest NTN-B available (2055, duration 14.6 years) falls **3.9 years short** of the liability target of 18.5 years. Full duration immunization requires combining NTN-B 2055 with **interest rate swaps (DI × IPCA)** — the standard approach used by large Brazilian EFPC funds for the long end of the duration curve.
 
 ---
 
@@ -118,7 +239,7 @@ The duration gap of 9.2 years is the main risk: a 100bp rate drop increases the 
 | Actuarial math | `lifecontingencies` (R) | Commutation, annuities, PUC valuation |
 | Mortality projection | `StMoMo` (R) | Lee-Carter SVD + Random Walk with Drift |
 | Data wrangling | `tidyverse` (R) | Pipeline and CSV export |
-| Visualization (R) | `ggplot2`, `patchwork` | Publication-quality charts |
+| Visualization R | `ggplot2`, `patchwork` | Publication-quality charts |
 | ALM | custom Python | Duration, convexity, NTN-B pricing |
 | Dashboard | `Streamlit` | Interactive 5-page application |
 
@@ -134,37 +255,33 @@ pension-fund-actuarial-analysis/
 ├── requirements_python.txt
 │
 ├── notebooks/
-│   ├── 01_mortality_tables.R    ← MortalityLaws: compare IBGE, BR-EMS, AT-2000
-│   ├── 02_lee_carter.R          ← StMoMo: fit LC + project to 2065
-│   ├── 03_bd_plan_valuation.R   ← lifecontingencies: PMBaC, PMBC, longevity
-│   └── 04_alm.ipynb             ← Python: duration, NTN-B, stress test
+│   ├── 01_mortality_tables.R
+│   ├── 02_lee_carter.R
+│   ├── 03_bd_plan_valuation.R
+│   └── 04_alm.ipynb
 │
 ├── src/
 │   ├── R/
-│   │   ├── mortality.R          ← table builders (BR-EMS, IBGE, AT-2000)
-│   │   ├── lee_carter_utils.R   ← StMoMo wrappers
-│   │   ├── bd_valuation.R       ← PUC valuation functions
-│   │   └── plan_data.R          ← synthetic participant generator
+│   │   ├── mortality.R
+│   │   ├── lee_carter_utils.R
+│   │   ├── bd_valuation.R
+│   │   └── plan_data.R
 │   └── python/
-│       └── alm.py               ← ALM engine (duration, NTN-B, stress test)
+│       └── alm.py
 │
 ├── app/
-│   └── streamlit_app.py         ← interactive dashboard (5 pages)
+│   └── streamlit_app.py
 │
-├── data/
-│   ├── raw/
-│   └── processed/               ← CSVs exported by R notebooks
-│
-└── results/
-    ├── figures/                 ← charts generated by notebooks
-    └── tables/                  ← longevity_sensitivity.csv, stress_test.csv
+└── data/
+    ├── raw/
+    └── processed/          ← CSVs exported by R notebooks
 ```
 
 ---
 
 ## Getting Started
 
-### Step 1 — Install R packages (run once in RStudio console)
+### Step 1 — R packages
 
 ```r
 install.packages(c(
@@ -175,31 +292,27 @@ install.packages(c(
 
 ### Step 2 — Run R scripts in order
 
-Open RStudio, set working directory to `notebooks/` and run:
-
 ```r
-setwd("path/to/notebooks")
+setwd("path/to/pension-fund-actuarial-analysis/notebooks")
 source("01_mortality_tables.R")
 source("02_lee_carter.R")
 source("03_bd_plan_valuation.R")
 ```
 
-This exports CSV files to `data/processed/`.
-
 ### Step 3 — Python setup
 
 ```bash
 python -m venv venv
-venv\Scripts\activate        # Windows
+venv\Scripts\activate
 pip install -r requirements_python.txt
 python -m ipykernel install --user --name=pension-venv --display-name "Python (pension-venv)"
 ```
 
-### Step 4 — Run Python notebook
+### Step 4 — Run notebook 04
 
-Open `notebooks/04_alm.ipynb` in VS Code, select kernel **Python (pension-venv)** and run all cells.
+Open `notebooks/04_alm.ipynb` in VS Code, select kernel **Python (pension-venv)**.
 
-### Step 5 — Launch Streamlit dashboard
+### Step 5 — Dashboard
 
 ```bash
 cd app
@@ -208,35 +321,7 @@ streamlit run streamlit_app.py
 
 ---
 
-## Actuarial Assumptions (PREVIC 2024)
-
-| Assumption | Value | Reference |
-|---|---|---|
-| Discount rate | 5.75% p.a. | PREVIC NPC 30/2024 |
-| Mortality table | BR-EMS 2021 (Male) | CNseg / SUSEP |
-| Salary growth | 2.0% real p.a. | Market practice |
-| Benefit accrual | 2% per year of service | Plan regulation |
-| Max benefit | 70% of projected final salary | Plan regulation |
-| Retirement age | 65 | PREVIC minimum |
-
----
-
-## Key Concepts Demonstrated
-
-- **Commutation functions** — Dx, Nx, Mx via `lifecontingencies::axn()` and `pxt()`
-- **Projected Unit Credit (PUC)** — IFRS IAS 19 / PREVIC standard valuation method
-- **PMBaC / PMBC** — Brazilian regulatory liability classification
-- **Lee-Carter (1992)** — SVD estimation + Random Walk with Drift via `StMoMo`
-- **Longevity risk quantification** — sensitivity of liability to mortality improvements
-- **Macaulay and modified duration** — liability interest rate sensitivity
-- **NTN-B pricing** — Brazilian IPCA-linked sovereign bond, preferred EFPC asset
-- **Duration gap** — main ALM risk metric for pension funds
-- **Parallel shift stress test** — Solvency II / PREVIC standard scenario
-- **Immunization** — why full duration matching requires derivatives beyond NTN-B 2055
-
----
-
 ## Author
 
-Arthur Motta — Statistics and Actuarial Science, UFRJ
-[GitHub](https://github.com/arthurpmotta02) | [LinkedIn](https://linkedin.com/in/arthurpmotta)
+Arthur Motta — Actuarial Science & Statistics, UFRJ
+[GitHub](https://github.com/arthurpmotta02) · [LinkedIn](https://linkedin.com/in/arthurpmotta)
